@@ -7,7 +7,7 @@ from fastapi.responses import PlainTextResponse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="WhatsApp Meta Webhook", version="1.0.0")
+app = FastAPI(title="WhatsApp Meta Webhook", version="1.0.1")
 
 # Token de verificación secreto (configurado en Dokploy)
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "mi_token_secreto_super_seguro")
