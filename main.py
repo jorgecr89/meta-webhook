@@ -16,7 +16,11 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "mi_token_secreto_super_seguro")
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
 NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/muse-glimmer-30b")
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
+NVIDIA_API_KEY = NVIDIA_API_KEY.strip()
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "").strip()
+for _name, _val in (("NVIDIA_API_KEY", NVIDIA_API_KEY), ("WHATSAPP_TOKEN", WHATSAPP_TOKEN)):
+    if not _val:
+        logger.error(f"La variable de entorno {_name} está vacía o no definida")
 GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION", "v21.0")
 SYSTEM_PROMPT = os.getenv(
     "SYSTEM_PROMPT",
