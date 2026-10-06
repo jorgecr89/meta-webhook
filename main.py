@@ -1,6 +1,7 @@
 import os
 import logging
-from fastapi import FastAPI, Request, HTTPException, Query, status
+import httpx
+from fastapi import BackgroundTasks, FastAPI, Request, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse
 
 # Configuración básica de logging
@@ -11,6 +12,60 @@ app = FastAPI(title="WhatsApp Meta Webhook", version="1.0.1")
 
 # Token de verificación secreto (configurado en Dokploy)
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "mi_token_secreto_super_seguro")
+
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
+NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/muse-glimmer-30b")
+NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
+GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION", "v21.0")
+SYSTEM_PROMPT = os.getenv(
+    "SYSTEM_PROMPT",
+    "Eres un asistente útil. Responde de forma breve y clara en el idioma del usuario.",
+)
+
+
+async def ask_nvidia(text: str) -> str:
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(
+            NVIDIA_URL,
+            headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
+            json={
+                "model": NVIDIA_MODEL,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": text},
+                ],
+                "temperature": 0.6,
+                "max_tokens": 512,
+            },
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()
+
+
+async def send_whatsapp(phone_number_id: str, to: str, text: str) -> None:
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(
+            f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages",
+            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+            json={
+                "messaging_product": "whatsapp",
+                "to": to,
+                "type": "text",
+                "text": {"body": text[:4096]},
+            },
+        )
+        r.raise_for_status()
+
+
+async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
+    try:
+        answer = await ask_nvidia(text)
+        await send_whatsapp(phone_number_id, to, answer)
+        logger.info(f"Respuesta enviada a {to}")
+    except Exception as e:
+        logger.error(f"Error respondiendo a {to}: {e}")
+
 
 @app.get("/")
 def health_check():
@@ -37,7 +92,7 @@ async def verify_webhook(
     )
 
 @app.post("/webhook")
-async def receive_message(request: Request):
+async def receive_message(request: Request, background_tasks: BackgroundTasks):
     """
     Endpoint para recibir mensajes y notificaciones de estado desde WhatsApp.
     """
@@ -55,7 +110,11 @@ async def receive_message(request: Request):
                         messages = value["messages"]
                         for msg in messages:
                             logger.info(f"Nuevo mensaje recibido de {msg.get('from')}: {msg.get('text', {}).get('body')}")
-                    
+                            text = msg.get("text", {}).get("body")
+                            phone_number_id = value.get("metadata", {}).get("phone_number_id")
+                            if msg.get("type") == "text" and text and phone_number_id:
+                                background_tasks.add_task(reply_with_ai, phone_number_id, msg["from"], text)
+
                     # Identificar si es una actualización de estado (enviado, entregado, leído)
                     elif "statuses" in value:
                         statuses = value["statuses"]
