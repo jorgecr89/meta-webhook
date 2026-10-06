@@ -1,5 +1,6 @@
 import os
 import logging
+from pathlib import Path
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Request, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse
@@ -22,9 +23,28 @@ for _name, _val in (("NVIDIA_API_KEY", NVIDIA_API_KEY), ("WHATSAPP_TOKEN", WHATS
     if not _val:
         logger.error(f"La variable de entorno {_name} está vacía o no definida")
 GRAPH_API_VERSION = os.getenv("GRAPH_API_VERSION", "v21.0")
+KNOWLEDGE_DIR = Path(os.getenv("KNOWLEDGE_DIR", Path(__file__).parent / "knowledge"))
+
+
+def load_knowledge() -> str:
+    # Documento pequeño: se inyecta completo en el prompt, sin fragmentar.
+    parts = [
+        f.read_text(encoding="utf-8")
+        for f in sorted(KNOWLEDGE_DIR.glob("*"))
+        if f.suffix.lower() in (".md", ".txt")
+    ]
+    return "\n\n".join(parts)
+
+
+KNOWLEDGE = load_knowledge()
+logger.info(f"Base de conocimiento cargada: {len(KNOWLEDGE)} caracteres")
+
 SYSTEM_PROMPT = os.getenv(
     "SYSTEM_PROMPT",
-    "Eres un asistente útil. Responde de forma breve y clara en el idioma del usuario.",
+    "Eres el asistente virtual del Taller Mecánico AutoMotor Pro. Atiende a los clientes por WhatsApp "
+    "de forma amable, profesional y breve. Responde ÚNICAMENTE con la información del contexto. "
+    "Si la respuesta no está en el contexto, indica amablemente que el cliente debe comunicarse "
+    "directamente con el taller. No inventes precios, horarios ni políticas.",
 )
 
 
@@ -36,7 +56,7 @@ async def ask_nvidia(text: str) -> str:
             json={
                 "model": NVIDIA_MODEL,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": f"{SYSTEM_PROMPT}\n\nContexto oficial del taller:\n{KNOWLEDGE}"},
                     {"role": "user", "content": text},
                 ],
                 "temperature": 0.6,
