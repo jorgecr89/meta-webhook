@@ -47,7 +47,15 @@ async def ask_nvidia(text: str) -> str:
         return r.json()["choices"][0]["message"]["content"].strip()
 
 
+def normalize_mx(number: str) -> str:
+    # Meta entrega los móviles mexicanos como 521XXXXXXXXXX pero la API espera 52XXXXXXXXXX
+    if number.startswith("521") and len(number) == 13:
+        return "52" + number[3:]
+    return number
+
+
 async def send_whatsapp(phone_number_id: str, to: str, text: str) -> None:
+    to = normalize_mx(to)
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
             f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages",
