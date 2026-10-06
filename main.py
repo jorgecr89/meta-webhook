@@ -60,11 +60,17 @@ async def ask_nvidia(text: str) -> str:
                     {"role": "user", "content": text},
                 ],
                 "temperature": 0.6,
-                "max_tokens": 512,
+                "max_tokens": int(os.getenv("NVIDIA_MAX_TOKENS", "2048")),
             },
         )
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"].strip()
+        data = r.json()
+        choice = data["choices"][0]
+        content = (choice["message"].get("content") or "").strip()
+        if not content:
+            logger.error(f"Respuesta vacía de NVIDIA (finish_reason={choice.get('finish_reason')}): {data}")
+            return "Disculpa, no pude generar una respuesta en este momento. Intenta de nuevo, por favor."
+        return content
 
 
 def normalize_mx(number: str) -> str:
