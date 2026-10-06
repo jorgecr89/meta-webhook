@@ -59,6 +59,8 @@ async def send_whatsapp(phone_number_id: str, to: str, text: str) -> None:
                 "text": {"body": text[:4096]},
             },
         )
+        if r.is_error:
+            logger.error(f"Graph API {r.status_code}: {r.text}")
         r.raise_for_status()
 
 
