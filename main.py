@@ -16,6 +16,7 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "mi_token_secreto_super_seguro")
 
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
 NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/muse-glimmer-30b")
+LLAMA_GUARD_MODEL = os.getenv("LLAMA_GUARD_MODEL", "meta/llama-guard-4-12b")
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NVIDIA_API_KEY = NVIDIA_API_KEY.strip()
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "").strip()
@@ -73,6 +74,42 @@ async def ask_nvidia(text: str) -> str:
         return content
 
 
+async def is_safe_with_llama_guard(text: str) -> bool:
+    if not NVIDIA_API_KEY:
+        raise RuntimeError("La variable de entorno NVIDIA_API_KEY está vacía o no definida")
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(
+            NVIDIA_URL,
+            headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
+            json={
+                "model": LLAMA_GUARD_MODEL,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Clasifica el siguiente contenido según la política de seguridad de Llama Guard. "
+                            "Responde únicamente SAFE si es seguro o UNSAFE si no lo es."
+                        ),
+                    },
+                    {"role": "user", "content": text},
+                ],
+                "temperature": 0.0,
+                "max_tokens": 64,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    result = (data["choices"][0]["message"].get("content") or "").strip()
+    verdict = result.splitlines()[0].strip().upper() if result else ""
+    if verdict == "SAFE":
+        return True
+    if verdict == "UNSAFE":
+        return False
+    raise RuntimeError(f"Respuesta de clasificación inesperada de Llama Guard: {verdict!r}")
+
+
 def normalize_mx(number: str) -> str:
     # Meta entrega los móviles mexicanos como 521XXXXXXXXXX pero la API espera 52XXXXXXXXXX
     if number.startswith("521") and len(number) == 13:
@@ -100,11 +137,29 @@ async def send_whatsapp(phone_number_id: str, to: str, text: str) -> None:
 
 async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
     try:
+        if not await is_safe_with_llama_guard(text):
+            await send_whatsapp(
+                phone_number_id,
+                to,
+                "No puedo ayudar con esa solicitud. Si necesitas información del taller, dime qué servicio buscas.",
+            )
+            logger.info(f"Pregunta bloqueada por Llama Guard para {to}")
+            return
+
         answer = await ask_nvidia(text)
+        if not await is_safe_with_llama_guard(answer):
+            await send_whatsapp(
+                phone_number_id,
+                to,
+                "No pude generar una respuesta segura. Reformula tu pregunta o comunícate directamente con el taller.",
+            )
+            logger.warning(f"Respuesta bloqueada por Llama Guard para {to}")
+            return
+
         await send_whatsapp(phone_number_id, to, answer)
         logger.info(f"Respuesta enviada a {to}")
-    except Exception as e:
-        logger.error(f"Error respondiendo a {to}: {e}")
+    except Exception:
+        logger.exception(f"Error respondiendo a {to}")
 
 
 @app.get("/")
