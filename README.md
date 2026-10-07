@@ -36,3 +36,24 @@ Configura estas variables de entorno en el despliegue:
 - `APP_SECRET` (recomendada): secreto de la app de Meta. Si se define, los POST a
   `/webhook` deben traer una firma `X-Hub-Signature-256` válida.
 - `MAX_BODY_BYTES` (predeterminado 262144): tamaño máximo del cuerpo.
+
+## Agendado de citas (Google Calendar)
+
+Si el cliente escribe algo como "quiero agendar una cita", el bot lo guía (servicio, día, hora y nombre),
+revisa disponibilidad en el calendario y crea el evento tras la confirmación. Escribir "cancelar" aborta
+el proceso. Este flujo no usa el LLM (las respuestas son fijas) y respeta el horario del taller
+(`BUSINESS_HOURS` en `booking.py`: L-V 8:00-18:00, sáb 9:00-14:00, domingo cerrado).
+
+Configuración:
+1. En Google Cloud crea un proyecto, habilita **Google Calendar API** y crea una **cuenta de servicio**
+   con una clave JSON.
+2. En Google Calendar, abre la configuración del calendario del taller → *Compartir con personas
+   específicas* → agrega el correo de la cuenta de servicio con permiso **Realizar cambios en eventos**.
+3. Variables de entorno:
+   - `GOOGLE_SERVICE_ACCOUNT_JSON` (requerida): contenido completo del JSON, o ese JSON en base64.
+     Sin ella el agendado queda desactivado.
+   - `GOOGLE_CALENDAR_ID` (opcional): por defecto el calendario del taller.
+   - `CALENDAR_TIMEZONE` (`America/Mexico_City`), `APPOINTMENT_MINUTES` (60),
+     `APPOINTMENT_CAPACITY` (1, citas simultáneas permitidas), `APPOINTMENT_MAX_DAYS_AHEAD` (60),
+     `APPOINTMENT_MIN_LEAD_MINUTES` (60), `BOOKING_DB_PATH` (`/tmp/booking_sessions.db`, estado de la
+     conversación compartido entre workers).

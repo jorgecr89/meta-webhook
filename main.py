@@ -8,6 +8,7 @@ import time
 from collections import deque
 from pathlib import Path
 import httpx
+import booking
 from fastapi import BackgroundTasks, FastAPI, Request, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse, Response
 
@@ -140,6 +141,7 @@ logger.info(
     "Config guard: modelo=%s fail_open=%s timeout=%ss | WHATSAPP_TOKEN len=%d fin=%s",
     LLAMA_GUARD_MODEL, LLAMA_GUARD_FAIL_OPEN, LLAMA_GUARD_TIMEOUT_SECONDS, len(WHATSAPP_TOKEN), WHATSAPP_TOKEN[-4:],
 )
+logger.info("Agendado de citas en Google Calendar: %s", "activo" if booking.ENABLED else "desactivado (falta GOOGLE_SERVICE_ACCOUNT_JSON)")
 KNOWLEDGE = load_knowledge()
 logger.info(f"Base de conocimiento cargada: {len(KNOWLEDGE)} caracteres")
 
@@ -266,6 +268,11 @@ async def guard_allows(question: str, answer: str | None = None) -> bool:
 
 async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
     try:
+        booking_reply = await booking.handle_message(to, text)
+        if booking_reply is not None:
+            await send_whatsapp(phone_number_id, to, booking_reply)
+            return
+
         if not await guard_allows(text):
             await send_whatsapp(
                 phone_number_id,
