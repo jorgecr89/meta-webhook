@@ -57,3 +57,9 @@ Configuración:
      `APPOINTMENT_CAPACITY` (1, citas simultáneas permitidas), `APPOINTMENT_MAX_DAYS_AHEAD` (60),
      `APPOINTMENT_MIN_LEAD_MINUTES` (60), `BOOKING_DB_PATH` (`/tmp/booking_sessions.db`, estado de la
      conversación compartido entre workers).
+### Function calling
+
+Con el agendado activo, el modelo conversacional (`NVIDIA_MODEL`) recibe la herramienta `agendar_cita` y la fecha/hora actuales.
+Si el cliente dice algo como "agéndame cambio de aceite mañana a las 10 a nombre de Juan", el modelo extrae los datos y el
+bot los valida (horario, disponibilidad, anticipación) con las mismas reglas del flujo guiado, pregunta lo que falte y
+**siempre pide confirmación** antes de crear el evento. Si el modelo no responde o falla, el flujo guiado (sin LLM) atiende la solicitud.

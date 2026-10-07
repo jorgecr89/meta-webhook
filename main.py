@@ -154,30 +154,40 @@ SYSTEM_PROMPT = os.getenv(
 )
 
 
-async def ask_nvidia(text: str) -> str:
+async def ask_nvidia(text: str) -> tuple[str, dict | None]:
+    """Devuelve (respuesta, argumentos de agendar_cita). Si el modelo pide agendar, la respuesta va vacía."""
+    system = f"{SYSTEM_PROMPT}\n\nContexto oficial del taller:\n{KNOWLEDGE}"
+    payload = {
+        "model": NVIDIA_MODEL,
+        "messages": [
+            {"role": "system", "content": f"{system}\n\n{booking.now_context()}" if booking.ENABLED else system},
+            {"role": "user", "content": text},
+        ],
+        "temperature": 0.6,
+        "max_tokens": int(os.getenv("NVIDIA_MAX_TOKENS", "2048")),
+    }
+    if booking.ENABLED:
+        payload["tools"] = booking.TOOLS
+        payload["tool_choice"] = "auto"
     async with httpx.AsyncClient(timeout=NVIDIA_TIMEOUT_SECONDS) as client:
-        r = await client.post(
-            NVIDIA_URL,
-            headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
-            json={
-                "model": NVIDIA_MODEL,
-                "messages": [
-                    {"role": "system", "content": f"{SYSTEM_PROMPT}\n\nContexto oficial del taller:\n{KNOWLEDGE}"},
-                    {"role": "user", "content": text},
-                ],
-                "temperature": 0.6,
-                "max_tokens": int(os.getenv("NVIDIA_MAX_TOKENS", "2048")),
-            },
-        )
+        r = await client.post(NVIDIA_URL, headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"}, json=payload)
         r.raise_for_status()
         data = r.json()
         choice = data["choices"][0]
-        content = (choice["message"].get("content") or "").strip()
+        message = choice["message"]
+        for call in message.get("tool_calls") or []:
+            fn = call.get("function") or {}
+            if fn.get("name") == "agendar_cita":
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except ValueError:
+                    args = {}
+                return "", args if isinstance(args, dict) else {}
+        content = (message.get("content") or "").strip()
         if not content:
             logger.error(f"Respuesta vacía de NVIDIA (finish_reason={choice.get('finish_reason')}): {data}")
-            return "Disculpa, no pude generar una respuesta en este momento. Intenta de nuevo, por favor."
-        return content
-
+            return "Disculpa, no pude generar una respuesta en este momento. Intenta de nuevo, por favor.", None
+        return content, None
 
 async def is_safe_with_llama_guard(question: str, answer: str | None = None) -> bool:
     # Llama Guard evalúa el último turno: la pregunta del usuario o, si se indica, la respuesta del asistente.
@@ -267,11 +277,28 @@ async def guard_allows(question: str, answer: str | None = None) -> bool:
 
 
 async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
+    booking_intent = booking.ENABLED and booking.wants_booking(text)
+
+    async def booking_fallback() -> bool:
+        # Si el LLM o el guard fallan, el flujo guiado (sin LLM) atiende la solicitud de cita.
+        if not booking_intent:
+            return False
+        try:
+            reply = await booking.handle_message(to, text)
+            if reply is None:
+                return False
+            await send_whatsapp(phone_number_id, to, reply)
+            return True
+        except Exception:
+            logger.exception(f"Falló el flujo guiado de citas para {to}")
+            return False
+
     try:
-        booking_reply = await booking.handle_message(to, text)
-        if booking_reply is not None:
-            await send_whatsapp(phone_number_id, to, booking_reply)
-            return
+        if booking.ENABLED and booking.has_session(to):
+            reply = await booking.handle_message(to, text)
+            if reply is not None:
+                await send_whatsapp(phone_number_id, to, reply)
+                return
 
         if not await guard_allows(text):
             await send_whatsapp(
@@ -282,7 +309,14 @@ async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
             logger.info(f"Pregunta bloqueada por Llama Guard para {to}")
             return
 
-        answer = await ask_nvidia(text)
+        answer, booking_args = await ask_nvidia(text)
+        if booking_args is not None:
+            reply = await booking.start_from_tool(to, booking_args)
+            await send_whatsapp(phone_number_id, to, reply or "No pude iniciar el agendado. Comunícate directamente con el taller.")
+            logger.info(f"Agendado iniciado por function calling para {to}")
+            return
+        if booking_intent and await booking_fallback():
+            return
         if not await guard_allows(text, answer):
             await send_whatsapp(
                 phone_number_id,
@@ -296,6 +330,8 @@ async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
         logger.info(f"Respuesta enviada a {to}")
     except httpx.TimeoutException:
         logger.exception(f"Timeout de NVIDIA al procesar el mensaje de {to}")
+        if await booking_fallback():
+            return
         try:
             await send_whatsapp(
                 phone_number_id,
@@ -306,6 +342,7 @@ async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
             logger.exception(f"No se pudo enviar el aviso de timeout a {to}")
     except Exception:
         logger.exception(f"Error respondiendo a {to}")
+        await booking_fallback()
 
 
 @app.get("/")

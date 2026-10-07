@@ -272,6 +272,8 @@ def wants_booking(text: str) -> bool:
     return bool(INTENT_RE.search(t)) and not NON_BOOKING_RE.search(t)
 
 
+ASK_SERVICE = "¡Claro! Te ayudo a agendar tu cita. ¿Qué servicio necesitas? (por ejemplo: cambio de aceite, frenos, diagnóstico)"
+
 def _fmt(start: datetime) -> str:
     return f"{DAY_NAMES[start.weekday()]} {start:%d/%m/%Y} a las {start:%H:%M}"
 
@@ -322,7 +324,7 @@ async def handle_message(phone: str, text: str) -> str | None:
         step, data = session if session else ("service", {})
         if session is None:
             _save(phone, "service", {})
-            return "¡Claro! Te ayudo a agendar tu cita. ¿Qué servicio necesitas? (por ejemplo: cambio de aceite, frenos, diagnóstico)"
+            return ASK_SERVICE
         return await _advance(phone, step, data, text, norm)
     except httpx.HTTPError:
         logger.exception("Error con Google Calendar al agendar para %s", phone)
@@ -394,3 +396,50 @@ async def _advance(phone: str, step: str, data: dict, text: str, norm: str) -> s
         _clear(phone)
         return "De acuerdo, no agendé la cita. Si quieres intentarlo de nuevo, escribe «agendar cita»."
     return "Responde «sí» para confirmar la cita o «no» para cancelar."
+
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "agendar_cita",
+            "description": (
+                "Inicia el agendado de una cita en el taller. Úsala siempre que el cliente quiera agendar, "
+                "reservar o apartar una cita. Incluye solo los datos que el cliente haya dicho; no inventes ninguno."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "servicio": {"type": "string", "description": "Servicio solicitado, por ejemplo cambio de aceite"},
+                    "fecha": {"type": "string", "description": "Fecha de la cita en formato YYYY-MM-DD"},
+                    "hora": {"type": "string", "description": "Hora de la cita en formato HH:MM de 24 horas"},
+                    "nombre": {"type": "string", "description": "Nombre del cliente"},
+                },
+            },
+        },
+    }
+]
+
+
+def now_context() -> str:
+    now = datetime.now(TZ)
+    return f"Fecha y hora actuales: {DAY_NAMES[now.weekday()]} {now:%Y-%m-%d %H:%M} ({TZ})."
+
+
+async def start_from_tool(phone: str, args: dict) -> str | None:
+    """Precarga la sesión con los datos extraídos por el LLM; cada dato pasa por las mismas validaciones del flujo guiado."""
+    if not ENABLED:
+        return None
+    _save(phone, "service", {})
+    reply = ASK_SERVICE
+    values = [("service", args.get("servicio")), ("date", args.get("fecha")), ("time", args.get("hora")), ("name", args.get("nombre"))]
+    try:
+        for expected, value in values:
+            session = _load(phone)
+            if session is None or session[0] != expected or not isinstance(value, str) or not value.strip():
+                break
+            reply = await _advance(phone, expected, session[1], value, _norm(value))
+    except httpx.HTTPError:
+        logger.exception("Error con Google Calendar al agendar para %s", phone)
+        return "No pude consultar la agenda en este momento. Intenta de nuevo en unos minutos o comunícate directamente con el taller."
+    return reply
