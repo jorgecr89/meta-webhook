@@ -136,6 +136,10 @@ def load_knowledge() -> str:
     return "\n\n".join(parts)
 
 
+logger.info(
+    "Config guard: modelo=%s fail_open=%s timeout=%ss | WHATSAPP_TOKEN len=%d fin=%s",
+    LLAMA_GUARD_MODEL, LLAMA_GUARD_FAIL_OPEN, LLAMA_GUARD_TIMEOUT_SECONDS, len(WHATSAPP_TOKEN), WHATSAPP_TOKEN[-4:],
+)
 KNOWLEDGE = load_knowledge()
 logger.info(f"Base de conocimiento cargada: {len(KNOWLEDGE)} caracteres")
 
