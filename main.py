@@ -170,9 +170,20 @@ async def ask_nvidia(text: str) -> str:
         return content
 
 
-async def is_safe_with_llama_guard(text: str) -> bool:
+async def is_safe_with_llama_guard(text: str, speaker: str = "User") -> bool:
     if not NVIDIA_API_KEY:
         raise RuntimeError("La variable de entorno NVIDIA_API_KEY está vacía o no definida")
+    if speaker not in {"User", "Assistant"}:
+        raise ValueError("speaker debe ser 'User' o 'Assistant'")
+
+    moderation_prompt = (
+        "Task: Check if there is unsafe content in the following conversation "
+        "according to the Llama Guard safety policy.\n"
+        "<BEGIN CONVERSATION>\n"
+        f"{speaker}: {text}\n"
+        "<END CONVERSATION>\n"
+        "Assess ONLY the last message. Start with 'safe' or 'unsafe'."
+    )
 
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(
@@ -180,16 +191,7 @@ async def is_safe_with_llama_guard(text: str) -> bool:
             headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
             json={
                 "model": LLAMA_GUARD_MODEL,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Clasifica el siguiente contenido según la política de seguridad de Llama Guard. "
-                            "Responde únicamente SAFE si es seguro o UNSAFE si no lo es."
-                        ),
-                    },
-                    {"role": "user", "content": text},
-                ],
+                "messages": [{"role": "user", "content": moderation_prompt}],
                 "temperature": 0.0,
                 "max_tokens": 64,
             },
@@ -249,7 +251,7 @@ async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
             return
 
         answer = await ask_nvidia(text)
-        if not await is_safe_with_llama_guard(answer):
+        if not await is_safe_with_llama_guard(answer, speaker="Assistant"):
             await send_whatsapp(
                 phone_number_id,
                 to,
