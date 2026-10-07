@@ -115,7 +115,7 @@ NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/muse-glimmer-30b")
 LLAMA_GUARD_MODEL = os.getenv("LLAMA_GUARD_MODEL", "meta/llama-guard-4-12b")
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NVIDIA_TIMEOUT_SECONDS = float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "120"))
-LLAMA_GUARD_TIMEOUT_SECONDS = float(os.getenv("LLAMA_GUARD_TIMEOUT_SECONDS", "300"))
+LLAMA_GUARD_TIMEOUT_SECONDS = float(os.getenv("LLAMA_GUARD_TIMEOUT_SECONDS", "60"))
 NVIDIA_API_KEY = NVIDIA_API_KEY.strip()
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "").strip()
 for _name, _val in (("NVIDIA_API_KEY", NVIDIA_API_KEY), ("WHATSAPP_TOKEN", WHATSAPP_TOKEN)):
@@ -172,20 +172,14 @@ async def ask_nvidia(text: str) -> str:
         return content
 
 
-async def is_safe_with_llama_guard(text: str, speaker: str = "User") -> bool:
+async def is_safe_with_llama_guard(question: str, answer: str | None = None) -> bool:
+    # Llama Guard evalúa el último turno: la pregunta del usuario o, si se indica, la respuesta del asistente.
     if not NVIDIA_API_KEY:
         raise RuntimeError("La variable de entorno NVIDIA_API_KEY está vacía o no definida")
-    if speaker not in {"User", "Assistant"}:
-        raise ValueError("speaker debe ser 'User' o 'Assistant'")
 
-    moderation_prompt = (
-        "Task: Check if there is unsafe content in the following conversation "
-        "according to the Llama Guard safety policy.\n"
-        "<BEGIN CONVERSATION>\n"
-        f"{speaker}: {text}\n"
-        "<END CONVERSATION>\n"
-        "Assess ONLY the last message. Start with 'safe' or 'unsafe'."
-    )
+    messages = [{"role": "user", "content": question}]
+    if answer is not None:
+        messages.append({"role": "assistant", "content": answer})
 
     async with httpx.AsyncClient(timeout=LLAMA_GUARD_TIMEOUT_SECONDS) as client:
         response = await client.post(
@@ -193,9 +187,11 @@ async def is_safe_with_llama_guard(text: str, speaker: str = "User") -> bool:
             headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
             json={
                 "model": LLAMA_GUARD_MODEL,
-                "messages": [{"role": "user", "content": moderation_prompt}],
-                "temperature": 0.0,
-                "max_tokens": 64,
+                "messages": messages,
+                "temperature": 0.2,
+                "top_p": 0.7,
+                "max_tokens": 20,
+                "stream": False,
             },
         )
         if response.is_error:
@@ -253,7 +249,7 @@ async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
             return
 
         answer = await ask_nvidia(text)
-        if not await is_safe_with_llama_guard(answer, speaker="Assistant"):
+        if not await is_safe_with_llama_guard(text, answer):
             await send_whatsapp(
                 phone_number_id,
                 to,
