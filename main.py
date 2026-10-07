@@ -114,6 +114,7 @@ NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
 NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/muse-glimmer-30b")
 LLAMA_GUARD_MODEL = os.getenv("LLAMA_GUARD_MODEL", "meta/llama-guard-4-12b")
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+NVIDIA_TIMEOUT_SECONDS = float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "120"))
 NVIDIA_API_KEY = NVIDIA_API_KEY.strip()
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "").strip()
 for _name, _val in (("NVIDIA_API_KEY", NVIDIA_API_KEY), ("WHATSAPP_TOKEN", WHATSAPP_TOKEN)):
@@ -146,7 +147,7 @@ SYSTEM_PROMPT = os.getenv(
 
 
 async def ask_nvidia(text: str) -> str:
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=NVIDIA_TIMEOUT_SECONDS) as client:
         r = await client.post(
             NVIDIA_URL,
             headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
@@ -185,7 +186,7 @@ async def is_safe_with_llama_guard(text: str, speaker: str = "User") -> bool:
         "Assess ONLY the last message. Start with 'safe' or 'unsafe'."
     )
 
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=NVIDIA_TIMEOUT_SECONDS) as client:
         response = await client.post(
             NVIDIA_URL,
             headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
@@ -262,6 +263,16 @@ async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
 
         await send_whatsapp(phone_number_id, to, answer)
         logger.info(f"Respuesta enviada a {to}")
+    except httpx.TimeoutException:
+        logger.exception(f"Timeout de NVIDIA al procesar el mensaje de {to}")
+        try:
+            await send_whatsapp(
+                phone_number_id,
+                to,
+                "El servicio está tardando más de lo esperado. No pude validar tu mensaje de forma segura; intenta de nuevo en unos minutos.",
+            )
+        except Exception:
+            logger.exception(f"No se pudo enviar el aviso de timeout a {to}")
     except Exception:
         logger.exception(f"Error respondiendo a {to}")
 
