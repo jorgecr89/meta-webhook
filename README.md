@@ -18,3 +18,18 @@ Configura estas variables de entorno en el despliegue:
 - `NVIDIA_MAX_TOKENS` (opcional): límite de tokens de la respuesta; predeterminado
   `2048`.
 - `WHATSAPP_TOKEN` (requerida): token de acceso de WhatsApp Cloud API.
+
+## Protección contra peticiones maliciosas
+
+- Solo existen las rutas `/` y `/webhook`; cualquier otra (`.env`, `*.php`, `.git`, etc.)
+  responde 404 sin procesamiento y cuenta como infracción. `/docs` y `/openapi.json`
+  están desactivadas.
+- Tras `SECURITY_MAX_STRIKES` infracciones (predeterminado 5) en
+  `SECURITY_STRIKE_WINDOW` segundos (600), la IP se bloquea `SECURITY_BAN_SECONDS`
+  segundos (3600). Las IP privadas nunca se bloquean. El estado está en memoria y es
+  independiente por worker.
+- La IP real se toma de `X-Forwarded-For`; `TRUSTED_PROXY_HOPS` (predeterminado 1)
+  indica cuántos proxies de confianza hay delante.
+- `APP_SECRET` (recomendada): secreto de la app de Meta. Si se define, los POST a
+  `/webhook` deben traer una firma `X-Hub-Signature-256` válida.
+- `MAX_BODY_BYTES` (predeterminado 262144): tamaño máximo del cuerpo.

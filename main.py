@@ -1,15 +1,111 @@
 import os
+import hmac
+import hashlib
+import ipaddress
+import json
 import logging
+import time
+from collections import deque
 from pathlib import Path
 import httpx
 from fastapi import BackgroundTasks, FastAPI, Request, HTTPException, Query, status
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 
 # Configuración básica de logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="WhatsApp Meta Webhook", version="1.0.1")
+# Se desactivan la documentación y el esquema OpenAPI para no exponer rutas innecesarias
+app = FastAPI(title="WhatsApp Meta Webhook", version="1.0.1", docs_url=None, redoc_url=None, openapi_url=None)
+
+# --- Protección contra escaneos y peticiones maliciosas ---
+APP_SECRET = os.getenv("APP_SECRET", "").strip()
+MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", "262144"))
+SECURITY_MAX_STRIKES = int(os.getenv("SECURITY_MAX_STRIKES", "5"))
+SECURITY_STRIKE_WINDOW = int(os.getenv("SECURITY_STRIKE_WINDOW", "600"))
+SECURITY_BAN_SECONDS = int(os.getenv("SECURITY_BAN_SECONDS", "3600"))
+TRUSTED_PROXY_HOPS = int(os.getenv("TRUSTED_PROXY_HOPS", "1"))
+ALLOWED_ROUTES = {
+    "/": {"GET", "HEAD"},
+    "/webhook": {"GET", "POST"},
+}
+_strikes: dict[str, deque] = {}
+_bans: dict[str, float] = {}
+_MAX_TRACKED_IPS = 10000
+
+if not APP_SECRET:
+    logger.warning("APP_SECRET no definido: no se verificará la firma X-Hub-Signature-256 de Meta")
+
+
+def client_ip(request: Request) -> str:
+    # Detrás del proxy, la IP real es la que éste añadió al final de X-Forwarded-For
+    forwarded = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+    if len(forwarded) >= TRUSTED_PROXY_HOPS > 0:
+        return forwarded[-TRUSTED_PROXY_HOPS]
+    return request.client.host if request.client else "unknown"
+
+
+def is_banned(ip: str) -> bool:
+    until = _bans.get(ip)
+    if until is None:
+        return False
+    if until <= time.monotonic():
+        _bans.pop(ip, None)
+        return False
+    return True
+
+
+def register_strike(ip: str, reason: str) -> None:
+    now = time.monotonic()
+    if len(_strikes) > _MAX_TRACKED_IPS:
+        _strikes.clear()
+    hits = _strikes.setdefault(ip, deque())
+    hits.append(now)
+    while hits and now - hits[0] > SECURITY_STRIKE_WINDOW:
+        hits.popleft()
+    logger.warning(f"Petición sospechosa de {ip}: {reason} ({len(hits)}/{SECURITY_MAX_STRIKES})")
+    if len(hits) < SECURITY_MAX_STRIKES:
+        return
+    try:
+        if not ipaddress.ip_address(ip).is_global:
+            # IP interna (p. ej. el proxy): bloquearla dejaría sin servicio a todos los clientes
+            return
+    except ValueError:
+        return
+    _bans[ip] = now + SECURITY_BAN_SECONDS
+    _strikes.pop(ip, None)
+    logger.error(f"IP {ip} bloqueada por {SECURITY_BAN_SECONDS}s")
+
+
+def valid_meta_signature(raw_body: bytes, header: str | None) -> bool:
+    if not APP_SECRET:
+        return True
+    if not header or not header.startswith("sha256="):
+        return False
+    expected = hmac.new(APP_SECRET.encode(), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header[len("sha256="):])
+
+
+@app.middleware("http")
+async def security_guard(request: Request, call_next):
+    ip = client_ip(request)
+    if is_banned(ip):
+        return Response(status_code=403)
+
+    allowed_methods = ALLOWED_ROUTES.get(request.url.path)
+    if allowed_methods is None:
+        register_strike(ip, f"ruta no permitida {request.method} {request.url.path[:100]}")
+        return Response(status_code=404)
+    if request.method not in allowed_methods:
+        register_strike(ip, f"método no permitido {request.method} {request.url.path}")
+        return Response(status_code=405)
+
+    content_length = request.headers.get("content-length", "")
+    if content_length.isdigit() and int(content_length) > MAX_BODY_BYTES:
+        register_strike(ip, "cuerpo demasiado grande")
+        return Response(status_code=413)
+
+    return await call_next(request)
 
 # Token de verificación secreto (configurado en Dokploy)
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "mi_token_secreto_super_seguro")
@@ -168,6 +264,7 @@ def health_check():
 
 @app.get("/webhook")
 async def verify_webhook(
+    request: Request,
     hub_mode: str = Query(None, alias="hub.mode"),
     hub_challenge: str = Query(None, alias="hub.challenge"),
     hub_verify_token: str = Query(None, alias="hub.verify_token"),
@@ -175,12 +272,14 @@ async def verify_webhook(
     """
     Endpoint para la verificación inicial de Meta.
     """
-    if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
+    if hub_mode == "subscribe" and hub_challenge and hmac.compare_digest(
+        (hub_verify_token or "").encode(), VERIFY_TOKEN.encode()
+    ):
         logger.info("Webhook verificado exitosamente por Meta.")
         # Meta requiere que se devuelva el challenge en texto plano
         return PlainTextResponse(content=hub_challenge, status_code=200)
-    
-    logger.warning("Fallo en la verificación del Webhook.")
+
+    register_strike(client_ip(request), "verificación de webhook fallida")
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN, 
         detail="Token de verificación inválido"
@@ -191,8 +290,18 @@ async def receive_message(request: Request, background_tasks: BackgroundTasks):
     """
     Endpoint para recibir mensajes y notificaciones de estado desde WhatsApp.
     """
+    raw_body = await request.body()
+    if len(raw_body) > MAX_BODY_BYTES:
+        register_strike(client_ip(request), "cuerpo demasiado grande")
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+    if not valid_meta_signature(raw_body, request.headers.get("x-hub-signature-256")):
+        register_strike(client_ip(request), "firma X-Hub-Signature-256 inválida")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Firma inválida")
+
     try:
-        body = await request.json()
+        body = json.loads(raw_body)
+        if not isinstance(body, dict):
+            return {"status": "ignored"}
         
         # Validación básica de la estructura de Meta
         if body.get("object") == "whatsapp_business_account":
