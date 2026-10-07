@@ -18,6 +18,7 @@ Configura estas variables de entorno en el despliegue:
 - `NVIDIA_MAX_TOKENS` (opcional): límite de tokens de la respuesta; predeterminado
   `2048`.
 - `NVIDIA_TIMEOUT_SECONDS` (opcional): tiempo máximo de espera por llamada a NVIDIA en segundos; predeterminado `120`. Si se agota, no se omite la moderación y se informa al usuario para que reintente.
+- `LLAMA_GUARD_TIMEOUT_SECONDS` (opcional): tiempo máximo para la llamada de moderación; predeterminado `300` segundos. Es independiente del timeout del modelo conversacional.
 - `WHATSAPP_TOKEN` (requerida): token de acceso de WhatsApp Cloud API.
 
 ## Protección contra peticiones maliciosas
