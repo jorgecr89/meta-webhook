@@ -112,10 +112,11 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "mi_token_secreto_super_seguro")
 
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
 NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/muse-glimmer-30b")
-LLAMA_GUARD_MODEL = os.getenv("LLAMA_GUARD_MODEL", "meta/llama-guard-4-12b")
+LLAMA_GUARD_MODEL = os.getenv("LLAMA_GUARD_MODEL", "nvidia/llama-3.1-nemotron-safety-guard-8b-v3")
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 NVIDIA_TIMEOUT_SECONDS = float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "120"))
 LLAMA_GUARD_TIMEOUT_SECONDS = float(os.getenv("LLAMA_GUARD_TIMEOUT_SECONDS", "60"))
+LLAMA_GUARD_FAIL_OPEN = os.getenv("LLAMA_GUARD_FAIL_OPEN", "false").strip().lower() in ("1", "true", "yes")
 NVIDIA_API_KEY = NVIDIA_API_KEY.strip()
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "").strip()
 for _name, _val in (("NVIDIA_API_KEY", NVIDIA_API_KEY), ("WHATSAPP_TOKEN", WHATSAPP_TOKEN)):
@@ -190,7 +191,7 @@ async def is_safe_with_llama_guard(question: str, answer: str | None = None) -> 
                 "messages": messages,
                 "temperature": 0.2,
                 "top_p": 0.7,
-                "max_tokens": 20,
+                "max_tokens": 100,
                 "stream": False,
             },
         )
@@ -204,12 +205,23 @@ async def is_safe_with_llama_guard(question: str, answer: str | None = None) -> 
         data = response.json()
 
     result = (data["choices"][0]["message"].get("content") or "").strip()
-    verdict = result.splitlines()[0].strip().upper() if result else ""
+    verdict = ""
+    try:
+        # Nemotron Safety Guard responde JSON: {"User Safety": "safe", "Response Safety": "unsafe", ...}
+        parsed = json.loads(result)
+        if isinstance(parsed, dict):
+            key = "Response Safety" if answer is not None else "User Safety"
+            verdict = str(parsed.get(key, "")).strip().upper()
+            if answer is not None and not verdict:
+                verdict = str(parsed.get("User Safety", "")).strip().upper()
+    except ValueError:
+        # Llama Guard responde texto plano: "safe" o "unsafe\nS<n>"
+        verdict = result.splitlines()[0].strip().upper() if result else ""
     if verdict == "SAFE":
         return True
     if verdict == "UNSAFE":
         return False
-    raise RuntimeError(f"Respuesta de clasificación inesperada de Llama Guard: {verdict!r}")
+    raise RuntimeError(f"Respuesta de clasificación inesperada del guard: {result[:200]!r}")
 
 
 def normalize_mx(number: str) -> str:
@@ -237,9 +249,20 @@ async def send_whatsapp(phone_number_id: str, to: str, text: str) -> None:
         r.raise_for_status()
 
 
+async def guard_allows(question: str, answer: str | None = None) -> bool:
+    try:
+        return await is_safe_with_llama_guard(question, answer)
+    except httpx.TransportError:
+        # Solo timeouts y fallos de red; veredictos inesperados o errores HTTP siguen bloqueando.
+        if not LLAMA_GUARD_FAIL_OPEN:
+            raise
+        logger.warning("Llama Guard no disponible; LLAMA_GUARD_FAIL_OPEN activo, se omite la moderación")
+        return True
+
+
 async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
     try:
-        if not await is_safe_with_llama_guard(text):
+        if not await guard_allows(text):
             await send_whatsapp(
                 phone_number_id,
                 to,
@@ -249,7 +272,7 @@ async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
             return
 
         answer = await ask_nvidia(text)
-        if not await is_safe_with_llama_guard(text, answer):
+        if not await guard_allows(text, answer):
             await send_whatsapp(
                 phone_number_id,
                 to,

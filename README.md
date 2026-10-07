@@ -13,12 +13,13 @@ Configura estas variables de entorno en el despliegue:
 
 - `NVIDIA_API_KEY` (requerida): clave de NVIDIA, utilizada para ambos modelos.
 - `LLAMA_GUARD_MODEL` (opcional): identificador del modelo de Llama Guard;
-  predeterminado `meta/llama-guard-4-12b`.
+  predeterminado `nvidia/llama-3.1-nemotron-safety-guard-8b-v3` (también acepta modelos Llama Guard con respuesta `safe`/`unsafe`).
 - `NVIDIA_MODEL` (opcional): identificador del modelo conversacional.
 - `NVIDIA_MAX_TOKENS` (opcional): límite de tokens de la respuesta; predeterminado
   `2048`.
 - `NVIDIA_TIMEOUT_SECONDS` (opcional): tiempo máximo de espera por llamada a NVIDIA en segundos; predeterminado `120`. Si se agota, no se omite la moderación y se informa al usuario para que reintente.
 - `LLAMA_GUARD_TIMEOUT_SECONDS` (opcional): tiempo máximo para la llamada de moderación; predeterminado `60` segundos. Es independiente del timeout del modelo conversacional.
+- `LLAMA_GUARD_FAIL_OPEN` (opcional, predeterminado `false`): si es `true`, cuando el guard no responda (timeout o error de red) el mensaje se procesa sin moderación y se registra una advertencia. Menos seguro; por defecto el bot no responde si no puede validar. Los veredictos inesperados y errores HTTP siempre bloquean.
 - `WHATSAPP_TOKEN` (requerida): token de acceso de WhatsApp Cloud API.
 
 ## Protección contra peticiones maliciosas
