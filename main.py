@@ -194,6 +194,12 @@ async def is_safe_with_llama_guard(text: str) -> bool:
                 "max_tokens": 64,
             },
         )
+        if response.is_error:
+            logger.error(
+                "Llama Guard respondió HTTP %s: %s",
+                response.status_code,
+                response.text[:1000],
+            )
         response.raise_for_status()
         data = response.json()
 
