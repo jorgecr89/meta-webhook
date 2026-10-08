@@ -298,11 +298,11 @@ async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
 
     async def keep_alive() -> None:
         while True:
-            await asyncio.sleep(5)
+            await asyncio.sleep(15)
             try:
-                await send_whatsapp(phone_number_id, to, "Trabajando...")
+                await send_whatsapp(phone_number_id, to, "Procesando...")
             except Exception:
-                logger.warning(f"No se pudo enviar el aviso 'trabajando' a {to}")
+                logger.warning(f"No se pudo enviar el aviso 'procesando' a {to}")
 
     def stop_heartbeat() -> None:
         if heartbeat and not heartbeat.done():
