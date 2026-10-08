@@ -13,6 +13,8 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
+# Alternativa: crear un archivo .env en la raíz con KEY=valor (se carga con python-dotenv;
+# las variables del sistema tienen prioridad sobre el .env)
 $env:VERIFY_TOKEN = "mi_token"
 $env:NVIDIA_API_KEY = "nvapi-..."
 $env:WHATSAPP_TOKEN = "EAA..."
@@ -52,7 +54,7 @@ comparte vía SQLite (`BOOKING_DB_PATH`); el estado de bloqueos de IP es por wor
 | `SECURITY_BAN_SECONDS` | No | `3600` | Duración del bloqueo. |
 | `TRUSTED_PROXY_HOPS` | No | `1` | Proxies de confianza delante (`X-Forwarded-For`). |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | No* | – | JSON de la cuenta de servicio (o en base64). *Sin ella el agendado se desactiva. |
-| `GOOGLE_CALENDAR_ID` | No | calendario del taller | ID del calendario. |
+| `GOOGLE_CALENDAR_ID` | Sí* | – | ID del calendario. Se lee de `.env` o del entorno. *Sin ella el agendado se desactiva. |
 | `CALENDAR_TIMEZONE` | No | `America/Mexico_City` | Zona horaria. |
 | `APPOINTMENT_MINUTES` | No | `60` | Duración de cada cita. |
 | `APPOINTMENT_CAPACITY` | No | `1` | Citas simultáneas permitidas. |
@@ -66,7 +68,7 @@ Constantes en código (`booking.py`): `BUSINESS_HOURS` (L-V 8-18, sáb 9-14, dom
 ### 1.5 Configuración de Google Calendar
 1. Crear proyecto en Google Cloud, habilitar **Google Calendar API**, crear cuenta de servicio y clave JSON.
 2. Compartir el calendario del taller con el correo de la cuenta de servicio (*Realizar cambios en eventos*).
-3. Definir `GOOGLE_SERVICE_ACCOUNT_JSON` (y opcionalmente `GOOGLE_CALENDAR_ID`).
+3. Definir `GOOGLE_SERVICE_ACCOUNT_JSON` y `GOOGLE_CALENDAR_ID` (ambas requeridas para activar el agendado).
 
 ### 1.6 Verificación rápida
 ```bash
@@ -177,4 +179,5 @@ Al agregar lógica, documenta el *porqué* (reglas de negocio, trampas de la API
 ## 5. Consideraciones de seguridad
 - Nunca registrar ni versionar tokens (`WHATSAPP_TOKEN`, `NVIDIA_API_KEY`, JSON de Google). El log solo muestra longitud y últimos 4 caracteres.
 - Cambia el valor predeterminado de `VERIFY_TOKEN` y define `APP_SECRET`.
-- `GOOGLE_CALENDAR_ID` tiene un valor predeterminado en código; define el tuyo por variable de entorno.
+- `GOOGLE_CALENDAR_ID` ya no tiene valor en el código: se carga de `.env` (con `python-dotenv`) o del entorno.
+  `.env` está en `.dockerignore` y no debe versionarse; en Docker/Dokploy define las variables en el entorno.

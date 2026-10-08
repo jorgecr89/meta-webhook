@@ -57,7 +57,8 @@ Configuración:
 3. Variables de entorno:
    - `GOOGLE_SERVICE_ACCOUNT_JSON` (requerida): contenido completo del JSON, o ese JSON en base64.
      Sin ella el agendado queda desactivado.
-   - `GOOGLE_CALENDAR_ID` (opcional): por defecto el calendario del taller.
+   - `GOOGLE_CALENDAR_ID` (requerida): ID del calendario del taller. Se lee del archivo `.env` (local) o de las
+     variables de entorno del despliegue. Sin ella el agendado queda desactivado.
    - `CALENDAR_TIMEZONE` (`America/Mexico_City`), `APPOINTMENT_MINUTES` (60),
      `APPOINTMENT_CAPACITY` (1, citas simultáneas permitidas), `APPOINTMENT_MAX_DAYS_AHEAD` (60),
      `APPOINTMENT_MIN_LEAD_MINUTES` (60), `BOOKING_DB_PATH` (`/tmp/booking_sessions.db`, estado de la

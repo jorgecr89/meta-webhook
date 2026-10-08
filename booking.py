@@ -14,13 +14,12 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import httpx
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-CALENDAR_ID = os.getenv(
-    "GOOGLE_CALENDAR_ID",
-    "8a694e63d3de42f2be715ccd967c6a8af472a386f60bc96450a4505aa5bb5e69@group.calendar.google.com",
-).strip()
+load_dotenv()
+CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "").strip()
 TZ = ZoneInfo(os.getenv("CALENDAR_TIMEZONE", "America/Mexico_City"))
 APPOINTMENT_MINUTES = int(os.getenv("APPOINTMENT_MINUTES", "60"))
 APPOINTMENT_CAPACITY = int(os.getenv("APPOINTMENT_CAPACITY", "1"))
@@ -76,7 +75,9 @@ def _credentials_info() -> dict | None:
 
 
 _CREDS_INFO = _credentials_info()
-ENABLED = _CREDS_INFO is not None
+if _CREDS_INFO is not None and not CALENDAR_ID:
+    logger.error("GOOGLE_CALENDAR_ID no definido (.env o variable de entorno): agendado desactivado")
+ENABLED = _CREDS_INFO is not None and bool(CALENDAR_ID)
 _creds = None
 
 

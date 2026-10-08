@@ -141,7 +141,7 @@ stateDiagram-v2
 | Google Calendar API v3 + OAuth2 | Disponibilidad y creación de eventos | `GOOGLE_SERVICE_ACCOUNT_JSON` |
 | SQLite (archivo local) | Sesiones de agendado | `BOOKING_DB_PATH` |
 
-Librerías Python: `fastapi`, `uvicorn`, `pydantic`, `httpx`, `google-auth`, `requests`, `tzdata`.
+Librerías Python: `fastapi`, `uvicorn`, `pydantic`, `httpx`, `google-auth`, `requests`, `tzdata`, `python-dotenv`.
 
 ## 3. Modelo de datos
 

@@ -9,6 +9,10 @@ import time
 from collections import deque
 from pathlib import Path
 import httpx
+from dotenv import load_dotenv
+
+# Debe ejecutarse antes de importar booking y de leer el resto de variables
+load_dotenv()
 import booking
 from fastapi import BackgroundTasks, FastAPI, Request, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse, Response
