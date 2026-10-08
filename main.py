@@ -1,4 +1,5 @@
 import os
+import asyncio
 import hmac
 import hashlib
 import ipaddress
@@ -293,12 +294,34 @@ async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
             logger.exception(f"Falló el flujo guiado de citas para {to}")
             return False
 
+    heartbeat: asyncio.Task | None = None
+
+    async def keep_alive() -> None:
+        while True:
+            await asyncio.sleep(5)
+            try:
+                await send_whatsapp(phone_number_id, to, "Trabajando...")
+            except Exception:
+                logger.warning(f"No se pudo enviar el aviso 'trabajando' a {to}")
+
+    def stop_heartbeat() -> None:
+        if heartbeat and not heartbeat.done():
+            heartbeat.cancel()
+
     try:
         if booking.ENABLED and booking.has_session(to):
             reply = await booking.handle_message(to, text)
             if reply is not None:
                 await send_whatsapp(phone_number_id, to, reply)
                 return
+
+        if booking_intent:
+            await send_whatsapp(
+                phone_number_id,
+                to,
+                "Iniciaremos el proceso de registro de tu cita. Este proceso puede tardar un poco, por favor espera.",
+            )
+            heartbeat = asyncio.create_task(keep_alive())
 
         if not await guard_allows(text):
             await send_whatsapp(
@@ -310,6 +333,7 @@ async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
             return
 
         answer, booking_args = await ask_nvidia(text)
+        stop_heartbeat()
         if booking_args is not None:
             reply = await booking.start_from_tool(to, booking_args)
             await send_whatsapp(phone_number_id, to, reply or "No pude iniciar el agendado. Comunícate directamente con el taller.")
@@ -330,6 +354,7 @@ async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
         logger.info(f"Respuesta enviada a {to}")
     except httpx.TimeoutException:
         logger.exception(f"Timeout de NVIDIA al procesar el mensaje de {to}")
+        stop_heartbeat()
         if await booking_fallback():
             return
         try:
@@ -342,7 +367,10 @@ async def reply_with_ai(phone_number_id: str, to: str, text: str) -> None:
             logger.exception(f"No se pudo enviar el aviso de timeout a {to}")
     except Exception:
         logger.exception(f"Error respondiendo a {to}")
+        stop_heartbeat()
         await booking_fallback()
+    finally:
+        stop_heartbeat()
 
 
 @app.get("/")
