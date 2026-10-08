@@ -1,6 +1,11 @@
 # meta-webhook
 Webhook META
 
+## Documentación
+
+- [Diseño y arquitectura](docs/01-diseno-arquitectura.md): SDD, diagramas (Mermaid), modelo de datos, prototipos de conversación.
+- [Documentación técnica](docs/02-documentacion-tecnica.md): instalación, variables de entorno, endpoints y flujo interno.
+
 ## Protección con Llama Guard
 
 Antes de enviar una pregunta al modelo conversacional, el webhook la clasifica con
